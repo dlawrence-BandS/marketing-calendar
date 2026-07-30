@@ -75,7 +75,7 @@ body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:32px}
 .cal-head{display:grid;grid-template-columns:repeat(7,1fr);background:#1a2a49}
 .cal-head div{text-align:center;padding:9px 0;font-family:var(--font-head);font-size:10.5px;font-weight:700;letter-spacing:.6px;color:#fff}
 .cal-week{display:grid;grid-template-columns:repeat(7,1fr)}
-.cal-cell{min-height:112px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;background:var(--white);transition:background .1s}
+.cal-cell{height:118px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:6px;display:flex;flex-direction:column;gap:4px;cursor:pointer;background:var(--white);transition:background .1s;overflow:hidden}
 .cal-cell:hover{background:var(--purple-xlight)}
 .cal-cell.empty{background:var(--bg2);cursor:default}
 .cal-cell.empty:hover{background:var(--bg2)}
@@ -89,7 +89,7 @@ body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:32px}
 .cal-more{font-size:10.5px;font-weight:700;color:var(--text4);padding:0 7px}
 
 /* large-image mode */
-.cal-wrap.large-mode .cal-cell{min-height:auto}
+.cal-wrap.large-mode .cal-cell{height:auto;min-height:118px;overflow:visible}
 .cal-tag-large{border-radius:6px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1);flex-shrink:0;cursor:grab}
 .cal-tag-large-img{width:100%;height:auto;max-height:280px;object-fit:contain;display:block;background:var(--bg2)}
 .cal-tag-large-noimg{width:100%;height:30px;display:flex;align-items:center;justify-content:center}
@@ -274,7 +274,7 @@ body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:32px}
 <div class="main">
   <div class="ask-bar" id="ask-bar">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6l2.1 2.1M3 12h3m12 0h3M5.6 18.4l2.1-2.1m8.6-8.6l2.1-2.1"/></svg>
-    <input type="text" id="ask-input" placeholder="Ask: what's happening this week? · social posts in August · Vicky's items">
+    <input type="text" id="ask-input" placeholder="Ask: what's happening this week? · social posts in August · blog posts next month">
     <button class="btn btn-primary" id="ask-submit">Ask</button>
   </div>
   <div class="ask-answer" id="ask-answer" style="display:none"></div>
@@ -961,7 +961,7 @@ document.getElementById('list-range').addEventListener('change', (e)=>{
    Ask bar — rule-based natural-language query, not a real AI model.
    Parses date phrases, category names, and people out of the text,
    then reuses List view to render the answer. Good for "what's on
-   this week", "social posts in August", "Vicky's items", etc. —
+   this week", "social posts in August", "blog posts next month", etc. —
    won't handle genuinely open-ended questions, just structured ones.
 ---------------------------------------------------------------- */
 function startOfWeekMon(date){
