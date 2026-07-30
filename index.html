@@ -495,8 +495,11 @@ async function loadEntries(opts){
   }
 }
 
-function entryToRow(id, date, category, title, notes, owner, assignedTo, imageUrl, imageFileId){
-  return { id, date, category, title, notes, owner, assignedTo, imageUrl: imageUrl||'', imageFileId: imageFileId||'' };
+// The server rebuilds the real image from imageFileId (via the Images sheet) on every
+// read, so the Entries sheet itself never needs the actual image data — sending it here
+// would just bloat every single save/move request, even ones that don't touch the image.
+function entryToRow(id, date, category, title, notes, owner, assignedTo, imageFileId){
+  return { id, date, category, title, notes, owner, assignedTo, imageUrl: '', imageFileId: imageFileId||'' };
 }
 
 function resizeImageFile(file, maxWidth=480, quality=0.6){
@@ -666,7 +669,7 @@ async function moveEntry(fromDate, toDate, id){
     renderDayModal();
   }
   try{
-    const row = entryToRow(entry.id, toDate, entry.category, entry.title, entry.notes, entry.owner, entry.assignedTo, entry.image, entry.imageFileId);
+    const row = entryToRow(entry.id, toDate, entry.category, entry.title, entry.notes, entry.owner, entry.assignedTo, entry.imageFileId);
     await apiPost({ action:'save', entry: row });
     setSyncStatus('Synced ' + new Date().toLocaleTimeString());
   }catch(err){
@@ -861,7 +864,7 @@ document.getElementById('form-save').onclick = async () => {
       document.getElementById('f-notes').value.trim(),
       document.getElementById('f-owner').value.trim(),
       document.getElementById('f-assigned').value.trim(),
-      finalImageUrl, finalImageFileId
+      finalImageFileId
     );
     await apiPost({ action:'save', entry: row });
 
