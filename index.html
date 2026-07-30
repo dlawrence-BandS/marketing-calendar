@@ -181,10 +181,20 @@ body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:32px}
 .list-group-date.is-today{color:var(--accent);border-color:var(--accent)}
 .list-empty{text-align:center;color:var(--text4);font-size:12.5px;font-style:italic;padding:50px 0}
 
+/* ── ask bar ── */
+.ask-bar{display:flex;align-items:center;gap:10px;background:var(--white);border:1.5px solid var(--accent);border-radius:100px;padding:9px 9px 9px 16px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.07),0 4px 16px rgba(200,169,110,.18)}
+.ask-bar svg{width:16px;height:16px;color:var(--accent);flex-shrink:0}
+.ask-bar input{border:none;outline:none;font-family:var(--font-body);font-size:13px;color:var(--text);width:100%;background:transparent}
+.ask-bar input::placeholder{color:var(--text4)}
+.ask-bar .btn{flex-shrink:0}
+.ask-answer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--text2);background:var(--accent-light);border:1px solid var(--accent);border-radius:var(--radius);padding:8px 14px;margin-bottom:16px}
+.ask-answer strong{color:var(--navy2)}
+.ask-answer a{color:var(--navy2);text-decoration:underline;cursor:pointer;font-weight:600;flex-shrink:0;margin-left:auto}
+
 /* ── print-only ── */
 .print-only{display:none}
 @media print{
-  .topbar,.nav-row,.filter-bar-row,.bs-footer,.view-switch,.toggle-switch,.list-toolbar-actions,.add-strip,.entry-card-actions{display:none !important}
+  .topbar,.nav-row,.filter-bar-row,.bs-footer,.view-switch,.toggle-switch,.add-strip,.entry-card-actions,.ask-bar,.ask-answer{display:none !important}
   .print-only{display:block;font-family:var(--font-head);font-size:16px;font-weight:700;color:#000;margin-bottom:14px}
   .main{padding:0;max-width:100%}
   .cal-wrap,.entry-card{box-shadow:none;border:1px solid #ccc}
@@ -254,12 +264,21 @@ body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:32px}
   </div>
   <div class="topbar-spacer"></div>
   <div class="topbar-actions">
+    <button class="btn btn-ghost-light" id="btn-export-csv" style="color:#fff;border-color:rgba(255,255,255,.3)">Export CSV</button>
+    <button class="btn btn-ghost-light" id="btn-print" style="color:#fff;border-color:rgba(255,255,255,.3)">Print</button>
     <button class="btn btn-ghost" id="btn-refresh" title="Pull the latest from the shared sheet">Refresh</button>
     <button class="btn btn-ghost" id="btn-today">Today</button>
   </div>
 </div>
 
 <div class="main">
+  <div class="ask-bar" id="ask-bar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M5.6 5.6l2.1 2.1m8.6 8.6l2.1 2.1M3 12h3m12 0h3M5.6 18.4l2.1-2.1m8.6-8.6l2.1-2.1"/></svg>
+    <input type="text" id="ask-input" placeholder="Ask: what's happening this week? · social posts in August · Vicky's items">
+    <button class="btn btn-primary" id="ask-submit">Ask</button>
+  </div>
+  <div class="ask-answer" id="ask-answer" style="display:none"></div>
+
   <div class="nav-row">
     <div class="nav-center">
       <button class="nav-btn" id="btn-prev" aria-label="Previous month">&#8249;</button>
@@ -302,11 +321,8 @@ body{display:flex;flex-direction:column;min-height:100vh;padding-bottom:32px}
         <option value="4weeks" selected>Next 4 weeks</option>
         <option value="quarter">Next 3 months</option>
         <option value="all">Everything (past + future)</option>
+        <option value="custom" id="list-range-custom-option" style="display:none"></option>
       </select>
-      <div class="list-toolbar-actions">
-        <button class="btn btn-ghost-light" id="btn-export-csv">Export CSV</button>
-        <button class="btn btn-ghost-light" id="btn-print">Print</button>
-      </div>
     </div>
     <div id="list-body"></div>
   </div>
@@ -420,6 +436,7 @@ let largeImages = false;
 let currentView = 'calendar';  // 'calendar' | 'list'
 let searchQuery = '';
 let listRange = '4weeks';
+let customRangeBounds = null; // set by the ask bar for arbitrary date ranges
 
 function pad(n){ return String(n).padStart(2,'0'); }
 function dateStr(y,m,d){ return `${y}-${pad(m+1)}-${pad(d)}`; }
@@ -541,7 +558,10 @@ function renderFilterBar(){
 ---------------------------------------------------------------- */
 function matchesSearch(e){
   if(!searchQuery) return true;
-  return [e.title, e.notes, e.owner, e.assignedTo].some(v => v && v.toLowerCase().includes(searchQuery));
+  const words = searchQuery.split(/\s+/).filter(Boolean);
+  if(words.length === 0) return true;
+  const haystacks = [e.title, e.notes, e.owner, e.assignedTo].filter(Boolean).map(v => v.toLowerCase());
+  return words.some(w => haystacks.some(h => h.includes(w)));
 }
 function filteredFor(ds){
   return (entries[ds]||[]).filter(e => activeFilters.has(e.category) && matchesSearch(e));
@@ -934,7 +954,134 @@ document.getElementById('list-range').addEventListener('change', (e)=>{
   renderListView();
 });
 
+/* ---------------------------------------------------------------
+   Ask bar — rule-based natural-language query, not a real AI model.
+   Parses date phrases, category names, and people out of the text,
+   then reuses List view to render the answer. Good for "what's on
+   this week", "social posts in August", "Vicky's items", etc. —
+   won't handle genuinely open-ended questions, just structured ones.
+---------------------------------------------------------------- */
+function startOfWeekMon(date){
+  const d = new Date(date);
+  const dow = (d.getDay() + 6) % 7; // 0 = Monday
+  d.setDate(d.getDate() - dow);
+  return d;
+}
+const MONTH_RE = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b\s*(\d{4})?/;
+function monthIndexFromWord(word){
+  const short = word.slice(0,3);
+  return MONTH_NAMES.findIndex(m => m.toLowerCase().startsWith(short));
+}
+const ASK_STOPWORDS = /\b(what'?s?|whats|show|me|is|are|on|for|happening|going|there|any|the|in|this|next|please|got|coming|up|do|we|have)\b/g;
+
+function parseAskQuery(raw){
+  let text = ' ' + raw.toLowerCase().trim() + ' ';
+  const now = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let range = null;
+
+  const patterns = [
+    [/\btoday\b/,     () => ({ start: now, end: now, label: 'Today' })],
+    [/\btomorrow\b/,  () => { const d = addDays(now,1); return { start: d, end: d, label: 'Tomorrow' }; }],
+    [/\byesterday\b/, () => { const d = addDays(now,-1); return { start: d, end: d, label: 'Yesterday' }; }],
+    [/\bnext week\b/, () => { const s = addDays(startOfWeekMon(now),7); return { start: s, end: addDays(s,6), label: 'Next week' }; }],
+    [/\bthis week\b/, () => { const s = startOfWeekMon(now); return { start: s, end: addDays(s,6), label: 'This week' }; }],
+    [/\bnext month\b/,() => { const b = new Date(today.getFullYear(), today.getMonth()+1, 1); return { start: new Date(b.getFullYear(),b.getMonth(),1), end: new Date(b.getFullYear(),b.getMonth()+1,0), label: MONTH_NAMES[b.getMonth()]+' '+b.getFullYear() }; }],
+    [/\bthis month\b/,() => ({ start: new Date(today.getFullYear(),today.getMonth(),1), end: new Date(today.getFullYear(),today.getMonth()+1,0), label: MONTH_NAMES[today.getMonth()]+' '+today.getFullYear() })],
+    [/\b(this quarter|next 3 months)\b/, () => ({ start: now, end: addDays(now,91), label: 'Next 3 months' })],
+  ];
+  for(const [re, build] of patterns){
+    if(re.test(text)){ range = build(); text = text.replace(re,' '); break; }
+  }
+  if(!range){
+    const m = text.match(MONTH_RE);
+    if(m){
+      const idx = monthIndexFromWord(m[1]);
+      if(idx >= 0){
+        let year = m[2] ? parseInt(m[2],10) : today.getFullYear();
+        if(!m[2] && idx < today.getMonth()) year += 1; // assume the upcoming occurrence
+        range = { start: new Date(year, idx, 1), end: new Date(year, idx+1, 0), label: MONTH_NAMES[idx]+' '+year };
+        text = text.replace(m[0], ' ');
+      }
+    }
+  }
+
+  const matchedCats = CATEGORIES.filter(c => text.includes(c.label.toLowerCase()));
+  matchedCats.forEach(c => { text = text.replace(c.label.toLowerCase(), ' '); });
+
+  text = text.replace(/'s\b/g, ' ').replace(ASK_STOPWORDS, ' ').replace(/\s+/g,' ').trim();
+
+  return { range, categories: matchedCats.map(c=>c.key), freeText: text };
+}
+
+function runAskQuery(raw){
+  const parsed = parseAskQuery(raw);
+
+  if(parsed.categories.length){
+    activeFilters = new Set(parsed.categories);
+  } else {
+    activeFilters = new Set(CATEGORIES.map(c=>c.key));
+  }
+  renderFilterBar();
+
+  searchQuery = parsed.freeText;
+  document.getElementById('search-input').value = parsed.freeText;
+  document.getElementById('search-box').classList.toggle('has-value', !!parsed.freeText);
+
+  if(parsed.range){
+    listRange = 'custom';
+    customRangeBounds = { start: parsed.range.start, end: parsed.range.end };
+    const opt = document.getElementById('list-range-custom-option');
+    opt.textContent = parsed.range.label;
+    opt.style.display = '';
+    document.getElementById('list-range').value = 'custom';
+  } else {
+    listRange = 'all';
+    document.getElementById('list-range').value = 'all';
+  }
+
+  setView('list');
+
+  const { start, end } = getListRangeBounds();
+  let count = 0;
+  Object.keys(entries).forEach(ds=>{
+    if(start || end){ const d = parseDateStr(ds); if(start && d < start) return; if(end && d > end) return; }
+    count += filteredFor(ds).length;
+  });
+
+  const bits = [];
+  bits.push(parsed.range ? `<strong>${parsed.range.label}</strong>` : '<strong>All dates</strong>');
+  if(parsed.categories.length) bits.push(parsed.categories.map(k=>CAT_BY_KEY[k].label).join(', '));
+  if(parsed.freeText) bits.push(`matching “${escapeHtml(parsed.freeText)}”`);
+
+  const answerEl = document.getElementById('ask-answer');
+  answerEl.style.display = 'flex';
+  answerEl.innerHTML = `${count} item${count===1?'':'s'} — ${bits.join(' · ')} <a id="ask-clear">Clear</a>`;
+  document.getElementById('ask-clear').onclick = clearAskQuery;
+}
+
+function clearAskQuery(){
+  document.getElementById('ask-input').value = '';
+  document.getElementById('ask-answer').style.display = 'none';
+  activeFilters = new Set(CATEGORIES.map(c=>c.key));
+  renderFilterBar();
+  searchQuery = '';
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-box').classList.remove('has-value');
+  listRange = '4weeks';
+  document.getElementById('list-range').value = '4weeks';
+  renderView();
+}
+
+document.getElementById('ask-submit').onclick = () => {
+  const val = document.getElementById('ask-input').value.trim();
+  if(val) runAskQuery(val);
+};
+document.getElementById('ask-input').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('ask-submit').click(); }
+});
+
 function getListRangeBounds(){
+  if(listRange === 'custom' && customRangeBounds) return customRangeBounds;
   if(listRange === 'all') return { start: null, end: null };
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const days = listRange === 'week' ? 7 : listRange === '4weeks' ? 28 : 91;
@@ -974,12 +1121,18 @@ function renderListView(){
 /* ---------------------------------------------------------------
    Export / Print (works from whatever's currently in the list view)
 ---------------------------------------------------------------- */
+function getActiveRangeBounds(){
+  if(currentView === 'list') return getListRangeBounds();
+  // Calendar view: bound to whichever month is currently displayed
+  return { start: new Date(cursor.year, cursor.month, 1), end: new Date(cursor.year, cursor.month + 1, 0) };
+}
+
 function csvEscape(v){
   const s = String(v==null ? '' : v);
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
 }
 document.getElementById('btn-export-csv').onclick = () => {
-  const { start, end } = getListRangeBounds();
+  const { start, end } = getActiveRangeBounds();
   const rows = [['Date','Category','Title','Notes','Owner','Assigned To','Image URL']];
   Object.keys(entries).sort().forEach(ds=>{
     if(start || end){
