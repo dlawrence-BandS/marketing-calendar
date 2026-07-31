@@ -568,7 +568,9 @@ function matchesSearch(e){
   return words.some(w => haystacks.some(h => h.includes(w)));
 }
 function filteredFor(ds){
-  return (entries[ds]||[]).filter(e => activeFilters.has(e.category) && matchesSearch(e));
+  return (entries[ds]||[])
+    .filter(e => activeFilters.has(e.category) && matchesSearch(e))
+    .sort((a,b) => (a.category==='highlight'?0:1) - (b.category==='highlight'?0:1));
 }
 
 function buildTagHtml(e, large, ds){
@@ -758,7 +760,9 @@ function wireEntryCardActions(container, onChange){
 
 function renderDayModal(){
   const all = entries[dayModalDate] || [];
-  const visible = all.filter(e=>activeFilters.has(e.category) && matchesSearch(e));
+  const visible = all
+    .filter(e=>activeFilters.has(e.category) && matchesSearch(e))
+    .sort((a,b) => (a.category==='highlight'?0:1) - (b.category==='highlight'?0:1));
   const hidden = all.length - visible.length;
   const hiddenNote = document.getElementById('day-hidden-note');
   hiddenNote.innerHTML = hidden>0 ? `<div class="hidden-note">${hidden} more item${hidden>1?'s':''} hidden by your current filters/search.</div>` : '';
