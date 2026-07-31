@@ -615,6 +615,7 @@ function renderCalendar(){
       }
       const ds = dateStr(cursor.year, cursor.month, d);
       const isToday = ds === todayStr();
+      const hasHighlight = (entries[ds]||[]).some(e => e.category === 'highlight');
       cell.className = 'cal-cell' + (isToday ? ' today' : '');
       const dayEntries = filteredFor(ds);
       const maxVisible = largeImages ? 2 : 3;
@@ -622,7 +623,8 @@ function renderCalendar(){
       const overflow = dayEntries.length - visible.length;
       let tagsHtml = visible.map(e => buildTagHtml(e, largeImages, ds)).join('');
       if(overflow>0) tagsHtml += `<div class="cal-more">+${overflow} more</div>`;
-      cell.innerHTML = `<div class="cal-date">${isToday?'&#9679; ':''}${d}</div>${tagsHtml}`;
+      const dateStyle = hasHighlight ? ` style="color:${CAT_BY_KEY.highlight.tint};font-weight:700"` : '';
+      cell.innerHTML = `<div class="cal-date"${dateStyle}>${isToday?'&#9679; ':''}${d}</div>${tagsHtml}`;
       cell.onclick = () => openDayModal(ds);
 
       cell.addEventListener('dragover', (ev)=>{ ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; cell.classList.add('drag-over'); });
