@@ -451,25 +451,35 @@ function setSyncStatus(text){
 
 function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 
-async function apiGet(action, params){
+// The Apps Script execution log shows every run completing fine in 1-3s with
+// zero failures — so when a request still fails, it's being rejected before
+// it ever reaches the script (most likely Google throttling bursty traffic
+// to the Web App endpoint), not a slow/broken script. A single quick retry
+// wasn't enough to clear that, so this backs off harder: several attempts
+// with increasing delay, giving a temporary throttle window time to pass.
+const API_RETRIES = 4;
+const API_BACKOFF_MS = [800, 1600, 3000, 5000];
+
+async function apiGet(action, params, onRetry){
   const q = new URLSearchParams(Object.assign({ action, token: APP_TOKEN }, params||{}));
   const url = `${APPS_SCRIPT_URL}?${q.toString()}`;
-  for(let attempt=0; attempt<2; attempt++){
+  for(let attempt=0; attempt<API_RETRIES; attempt++){
     try{
       const res = await fetch(url);
       const data = await res.json();
       if(data.error) throw new Error(data.error);
       return data;
     }catch(err){
-      if(attempt===1) throw err; // second failure — let the caller handle it
-      await sleep(900); // quiet retry once — often just a cold start or a momentary blip
+      if(attempt===API_RETRIES-1) throw err;
+      if(onRetry) onRetry(attempt+1, API_RETRIES);
+      await sleep(API_BACKOFF_MS[attempt]);
     }
   }
 }
-async function apiPost(payload){
+async function apiPost(payload, onRetry){
   // Content-Type text/plain avoids a CORS preflight, which Apps Script web apps don't handle.
   const body = JSON.stringify(Object.assign({}, payload, { token: APP_TOKEN }));
-  for(let attempt=0; attempt<2; attempt++){
+  for(let attempt=0; attempt<API_RETRIES; attempt++){
     try{
       const res = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
@@ -480,8 +490,9 @@ async function apiPost(payload){
       if(data.error) throw new Error(data.error);
       return data;
     }catch(err){
-      if(attempt===1) throw err;
-      await sleep(900);
+      if(attempt===API_RETRIES-1) throw err;
+      if(onRetry) onRetry(attempt+1, API_RETRIES);
+      await sleep(API_BACKOFF_MS[attempt]);
     }
   }
 }
@@ -926,6 +937,7 @@ document.getElementById('form-save').onclick = async () => {
   const newDate = document.getElementById('f-date').value || formState.date;
   const saveBtn = document.getElementById('form-save');
   saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+  const onRetry = (n, total) => { saveBtn.textContent = `Saving… (retry ${n}/${total-1})`; };
 
   try{
     // Image only gets uploaded to Drive at Save time — this is what keeps
@@ -934,7 +946,7 @@ document.getElementById('form-save').onclick = async () => {
     let finalImageFileId = formState.originalImageFileId;
 
     if(formState.imageIsNew){
-      const uploaded = await apiPost({ action:'uploadImage', filename: formState.id + '.jpg', dataUrl: formState.image });
+      const uploaded = await apiPost({ action:'uploadImage', filename: formState.id + '.jpg', dataUrl: formState.image }, onRetry);
       finalImageUrl = uploaded.image.url;
       finalImageFileId = uploaded.image.fileId;
       imageCache[finalImageFileId] = finalImageUrl; // already have it — skip the redundant fetch on next render
@@ -953,7 +965,8 @@ document.getElementById('form-save').onclick = async () => {
       document.getElementById('f-assigned').value.trim(),
       finalImageFileId
     );
-    await apiPost({ action:'save', entry: row });
+    saveBtn.textContent = 'Saving…';
+    await apiPost({ action:'save', entry: row }, onRetry);
 
     // update local cache so the UI reflects the change instantly
     if(entries[formState.date]){
@@ -1298,6 +1311,7 @@ async function init(){
     if(document.hidden) return; // don't poll from background tabs — a big source of unnecessary concurrent load
     const modalOpen = document.getElementById('overlay-day').classList.contains('show') || document.getElementById('overlay-form').classList.contains('show');
     if(modalOpen) return; // don't yank data from under someone mid-edit
+    await sleep(Math.random() * 15000); // jitter so everyone's tabs don't poll at the same aligned moment
     await loadEntries({silent:true});
     renderView();
   }, AUTO_REFRESH_MS);
