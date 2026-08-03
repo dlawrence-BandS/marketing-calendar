@@ -568,6 +568,27 @@ function resizeImageFile(file, maxWidth=480, quality=0.6){
   });
 }
 
+// Screenshots/graphics with text compress far worse than photos at the same
+// quality setting (sharp edges defeat JPEG compression) — if the first pass
+// comes out too big for the backend's per-image cap, step down size/quality
+// automatically rather than just failing on anything but plain photos.
+const IMAGE_SAFE_BASE64_LIMIT = 220000; // stay under the backend's ~260,000-char cap
+async function resizeImageSmart(file){
+  const steps = [
+    { maxWidth:480, quality:0.6 },
+    { maxWidth:380, quality:0.5 },
+    { maxWidth:300, quality:0.42 },
+    { maxWidth:240, quality:0.35 },
+  ];
+  let result = null;
+  for(const step of steps){
+    result = await resizeImageFile(file, step.maxWidth, step.quality);
+    const len = (result.split(',')[1] || '').length;
+    if(len <= IMAGE_SAFE_BASE64_LIMIT) return result;
+  }
+  throw new Error('That image is too large or detailed to store here, even after compressing. Try a smaller photo, or crop/screenshot just the relevant part.');
+}
+
 const iconImg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>`;
 const iconEdit = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4Z"/></svg>`;
 const iconTrash = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6"/></svg>`;
@@ -889,9 +910,12 @@ document.getElementById('f-file').addEventListener('change', async (e)=>{
   const area = document.getElementById('image-area');
   area.innerHTML = `<div class="upload-box">Processing image…</div>`;
   try{
-    formState.image = await resizeImageFile(file);
+    formState.image = await resizeImageSmart(file);
     formState.imageIsNew = true;
-  }catch(err){}
+  }catch(err){
+    console.error(err);
+    alert(err.message || "Couldn't process that image — try a different file.");
+  }
   renderImageArea();
   e.target.value = '';
 });
