@@ -421,7 +421,7 @@ const MONTH_NAMES = ["January","February","March","April","May","June","July","A
 ---------------------------------------------------------------- */
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxYrFYS3JX9iZN1Y2bJNJvWFXKhexh2JrDmq7Gf1XccAY_6vhGlHTelCLtucS7Oy59C/exec';
 const APP_TOKEN = 'gsgfgz6643hhdsg';
-const AUTO_REFRESH_MS = 60000; // how often to quietly pull in changes made by others
+const AUTO_REFRESH_MS = 180000; // every 3 min, not 60s — background tabs polling too often was compounding the collision risk described above
 const SITE_PASSCODE = ''; // leave blank to disable. Set a string to require it on load (light deterrent, not real security — see SETUP.md)
 
 /* ---------------------------------------------------------------
@@ -1295,6 +1295,7 @@ async function init(){
   await loadEntries();
   renderView();
   setInterval(async ()=>{
+    if(document.hidden) return; // don't poll from background tabs — a big source of unnecessary concurrent load
     const modalOpen = document.getElementById('overlay-day').classList.contains('show') || document.getElementById('overlay-form').classList.contains('show');
     if(modalOpen) return; // don't yank data from under someone mid-edit
     await loadEntries({silent:true});
