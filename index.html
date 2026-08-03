@@ -460,13 +460,29 @@ function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
 const API_RETRIES = 4;
 const API_BACKOFF_MS = [800, 1600, 3000, 5000];
 
+// A response that fails to parse as JSON means Google rejected/blocked the
+// request before it ever reached the script (confirmed via the Executions
+// log showing zero script-side failures) — usually brief throttling under
+// bursty traffic, not a real fault. Translate the raw browser parse error
+// into something that doesn't read like the calendar itself is broken.
+async function parseApiResponse(res){
+  let text;
+  try{ text = await res.text(); }
+  catch(e){ throw new Error("Couldn't reach the calendar's backend — check your connection and try again."); }
+  try{
+    return JSON.parse(text);
+  }catch(e){
+    throw new Error("Google's servers briefly blocked or delayed this request — this is usually temporary and clears up within a few seconds. It's not something wrong with your data.");
+  }
+}
+
 async function apiGet(action, params, onRetry){
   const q = new URLSearchParams(Object.assign({ action, token: APP_TOKEN }, params||{}));
   const url = `${APPS_SCRIPT_URL}?${q.toString()}`;
   for(let attempt=0; attempt<API_RETRIES; attempt++){
     try{
       const res = await fetch(url);
-      const data = await res.json();
+      const data = await parseApiResponse(res);
       if(data.error) throw new Error(data.error);
       return data;
     }catch(err){
@@ -486,7 +502,7 @@ async function apiPost(payload, onRetry){
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body
       });
-      const data = await res.json();
+      const data = await parseApiResponse(res);
       if(data.error) throw new Error(data.error);
       return data;
     }catch(err){
@@ -521,7 +537,7 @@ async function loadEntries(opts){
     setSyncStatus('Synced ' + new Date().toLocaleTimeString());
   }catch(err){
     console.error(err);
-    setSyncStatus('⚠ Sync failed — check your connection');
+    setSyncStatus('⚠ Sync delayed — will retry automatically');
   }
 }
 
@@ -756,7 +772,7 @@ async function moveEntry(fromDate, toDate, id){
     setSyncStatus('Synced ' + new Date().toLocaleTimeString());
   }catch(err){
     console.error(err);
-    alert("Couldn't save that move — check your connection. Refreshing to be safe.");
+    alert("Couldn't save that move.\n\n" + err.message + "\n\nRefreshing to be safe.");
     await loadEntries();
     renderCalendar();
   }
@@ -828,7 +844,7 @@ function wireEntryCardActions(container, onChange){
         if(onChange) onChange();
       }catch(err){
         console.error(err);
-        alert("Couldn't delete — check your connection and try again.");
+        alert("Couldn't delete.\n\n" + err.message);
         btn.disabled = false;
       }
     };
@@ -990,7 +1006,7 @@ document.getElementById('form-save').onclick = async () => {
     setSyncStatus('Synced ' + new Date().toLocaleTimeString());
   }catch(err){
     console.error(err);
-    alert("Couldn't save — check your connection and try again.\n\n" + err.message);
+    alert("Couldn't save.\n\n" + err.message);
   }finally{
     saveBtn.disabled = false; saveBtn.textContent = 'Save';
   }
