@@ -449,23 +449,41 @@ function setSyncStatus(text){
   if(el) el.textContent = text;
 }
 
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
 async function apiGet(action, params){
   const q = new URLSearchParams(Object.assign({ action, token: APP_TOKEN }, params||{}));
-  const res = await fetch(`${APPS_SCRIPT_URL}?${q.toString()}`);
-  const data = await res.json();
-  if(data.error) throw new Error(data.error);
-  return data;
+  const url = `${APPS_SCRIPT_URL}?${q.toString()}`;
+  for(let attempt=0; attempt<2; attempt++){
+    try{
+      const res = await fetch(url);
+      const data = await res.json();
+      if(data.error) throw new Error(data.error);
+      return data;
+    }catch(err){
+      if(attempt===1) throw err; // second failure — let the caller handle it
+      await sleep(900); // quiet retry once — often just a cold start or a momentary blip
+    }
+  }
 }
 async function apiPost(payload){
   // Content-Type text/plain avoids a CORS preflight, which Apps Script web apps don't handle.
-  const res = await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(Object.assign({}, payload, { token: APP_TOKEN }))
-  });
-  const data = await res.json();
-  if(data.error) throw new Error(data.error);
-  return data;
+  const body = JSON.stringify(Object.assign({}, payload, { token: APP_TOKEN }));
+  for(let attempt=0; attempt<2; attempt++){
+    try{
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body
+      });
+      const data = await res.json();
+      if(data.error) throw new Error(data.error);
+      return data;
+    }catch(err){
+      if(attempt===1) throw err;
+      await sleep(900);
+    }
+  }
 }
 
 function rowsToEntries(rows){
@@ -501,6 +519,32 @@ async function loadEntries(opts){
 // would just bloat every single save/move request, even ones that don't touch the image.
 function entryToRow(id, date, category, title, notes, owner, assignedTo, imageFileId){
   return { id, date, category, title, notes, owner, assignedTo, imageUrl: '', imageFileId: imageFileId||'' };
+}
+
+/* ---------------------------------------------------------------
+   Lazy image loading — images are fetched one at a time, only when
+   actually about to be displayed, and cached in memory for the rest
+   of the session. This is what keeps a normal "list" refresh light —
+   it no longer drags every image's data along with it every time.
+---------------------------------------------------------------- */
+const imageCache = {};
+async function fetchImage(imageId){
+  if(!imageId) return null;
+  if(imageId in imageCache) return imageCache[imageId]; // cached (or a cached "failed" null)
+  try{
+    const data = await apiGet('getImage', { id: imageId });
+    imageCache[imageId] = data.url || null;
+  }catch(err){
+    console.error('Image load failed for', imageId, err);
+    imageCache[imageId] = null;
+  }
+  return imageCache[imageId];
+}
+function hydrateImages(root){
+  (root || document).querySelectorAll('img[data-img-id]:not([data-hydrated])').forEach(img=>{
+    img.setAttribute('data-hydrated', '1');
+    fetchImage(img.getAttribute('data-img-id')).then(url=>{ if(url) img.src = url; });
+  });
 }
 
 function resizeImageFile(file, maxWidth=480, quality=0.6){
@@ -578,8 +622,8 @@ function buildTagHtml(e, large, ds){
   const label = escapeHtml(e.title || cat.label);
   const tooltip = escapeHtml(cat.label + ': ' + (e.title||'') + ' — drag to move');
   if(large){
-    const img = e.image
-      ? `<img src="${e.image}" class="cal-tag-large-img" alt="${label}">`
+    const img = e.imageFileId
+      ? `<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" data-img-id="${e.imageFileId}" class="cal-tag-large-img" alt="${label}">`
       : `<div class="cal-tag-large-noimg" style="background:${cat.tint};color:${cat.ink}">${iconImg}</div>`;
     return `<div class="cal-tag-large" draggable="true" data-id="${e.id}" data-date="${ds}" title="${tooltip}">
       ${img}
@@ -587,7 +631,7 @@ function buildTagHtml(e, large, ds){
     </div>`;
   }
   return `<div class="cal-tag" draggable="true" data-id="${e.id}" data-date="${ds}" style="background:${cat.tint};color:${cat.ink}" title="${tooltip}">
-    ${e.image ? `<img src="${e.image}" class="cal-thumb" alt="">` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
+    ${e.imageFileId ? `<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" data-img-id="${e.imageFileId}" class="cal-thumb" alt="">` : ''}<span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
   </div>`;
 }
 
@@ -651,6 +695,7 @@ function renderCalendar(){
     });
     body.appendChild(weekRow);
   }
+  hydrateImages(body);
 }
 
 function escapeHtml(s){
@@ -714,7 +759,7 @@ function buildEntryCardHtml(e, ds){
         <button class="btn-icon" style="color:${cat.ink}" data-del="${e.id}" data-date="${ds}">${iconTrash}</button>
       </div>
     </div>
-    ${e.image ? `<img src="${e.image}" alt="${escapeHtml(e.title||'')}">` : ''}
+    ${e.imageFileId ? `<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7" data-img-id="${e.imageFileId}" alt="${escapeHtml(e.title||'')}">` : ''}
     <div class="entry-card-body">
       <div class="entry-title">${escapeHtml(e.title||'(untitled)')}</div>
       ${e.notes ? `<div class="entry-notes">${iconNote}<span>${escapeHtml(e.notes)}</span></div>` : ''}
@@ -774,6 +819,7 @@ function renderDayModal(){
   }
   grid.innerHTML = visible.map(e => buildEntryCardHtml(e, dayModalDate)).join('');
   wireEntryCardActions(grid, () => { renderDayModal(); renderCalendar(); });
+  hydrateImages(grid);
 }
 
 /* ---------------------------------------------------------------
@@ -784,8 +830,8 @@ function openEntryForm(date, entry){
     date,
     id: entry ? entry.id : uid(),
     category: entry ? entry.category : CATEGORIES[0].key,
-    image: entry ? entry.image || null : null,       // shown in preview: existing Drive URL, a fresh data URL, or null
-    originalImageFileId: entry ? entry.imageFileId || null : null, // Drive file already stored for this entry, if any
+    image: null,       // shown in preview: existing image (fetched lazily below), a fresh data URL, or null
+    originalImageFileId: entry ? entry.imageFileId || null : null, // image already stored for this entry, if any
     imageIsNew: false,   // true once the user picks a fresh file — triggers an upload on Save
   };
   document.getElementById('form-modal-title').textContent = (entry ? 'Edit item' : 'Add item') + ' · ' + fmtDateLong(date);
@@ -799,6 +845,15 @@ function openEntryForm(date, entry){
   renderImageArea();
   document.getElementById('overlay-form').classList.add('show');
   setTimeout(()=>document.getElementById('f-title').focus(), 50);
+
+  if(formState.originalImageFileId){
+    document.getElementById('image-area').innerHTML = `<div class="upload-box">Loading image…</div>`;
+    fetchImage(formState.originalImageFileId).then(url=>{
+      if(!formState || formState.id !== (entry ? entry.id : formState.id)) return; // form was closed/changed
+      formState.image = url;
+      renderImageArea();
+    });
+  }
 }
 function closeEntryForm(){
   document.getElementById('overlay-form').classList.remove('show');
@@ -858,6 +913,7 @@ document.getElementById('form-save').onclick = async () => {
       const uploaded = await apiPost({ action:'uploadImage', filename: formState.id + '.jpg', dataUrl: formState.image });
       finalImageUrl = uploaded.image.url;
       finalImageFileId = uploaded.image.fileId;
+      imageCache[finalImageFileId] = finalImageUrl; // already have it — skip the redundant fetch on next render
       if(formState.originalImageFileId){
         apiPost({ action:'deleteImage', fileId: formState.originalImageFileId }).catch(()=>{}); // best-effort cleanup
       }
@@ -1126,6 +1182,7 @@ function renderListView(){
   const body = document.getElementById('list-body');
   body.innerHTML = anyShown ? html : `<div class="list-empty">Nothing found for this range${searchQuery?' and search':''}.</div>`;
   wireEntryCardActions(body, renderListView);
+  hydrateImages(body);
 }
 
 /* ---------------------------------------------------------------
@@ -1143,7 +1200,7 @@ function csvEscape(v){
 }
 document.getElementById('btn-export-csv').onclick = () => {
   const { start, end } = getActiveRangeBounds();
-  const rows = [['Date','Category','Title','Notes','Owner','Assigned To','Image URL']];
+  const rows = [['Date','Category','Title','Notes','Owner','Assigned To','Has Image']];
   Object.keys(entries).sort().forEach(ds=>{
     if(start || end){
       const d = parseDateStr(ds);
@@ -1151,7 +1208,7 @@ document.getElementById('btn-export-csv').onclick = () => {
       if(end && d > end) return;
     }
     filteredFor(ds).forEach(e=>{
-      rows.push([ds, CAT_BY_KEY[e.category].label, e.title||'', e.notes||'', e.owner||'', e.assignedTo||'', e.image||'']);
+      rows.push([ds, CAT_BY_KEY[e.category].label, e.title||'', e.notes||'', e.owner||'', e.assignedTo||'', e.imageFileId ? 'Yes' : 'No']);
     });
   });
   const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
